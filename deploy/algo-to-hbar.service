@@ -1,0 +1,23 @@
+[Unit]
+Description=ALGO -> HBAR Bridge Relayer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=relayer
+WorkingDirectory=/opt/relayers/algo_to_hbar
+ExecStart=/usr/bin/python3 /opt/relayers/algo_to_hbar/relayer.py
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=algo-to-hbar
+
+# hedera-sdk-py requires Java 17
+Environment=JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
