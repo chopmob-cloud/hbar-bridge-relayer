@@ -92,7 +92,8 @@ HEDERA_MIRROR_URL      = os.getenv("HEDERA_MIRROR_URL",
 
 POLL_DELAY      = int(os.getenv("POLL_DELAY",      "15"))
 CONFIRM_ROUNDS  = int(os.getenv("CONFIRM_ROUNDS",  "6"))
-MAX_DEPOSIT     = int(os.getenv("MAX_DEPOSIT",     "0"))   # 0 = no cap (base units)
+MAX_DEPOSIT               = int(os.getenv("MAX_DEPOSIT",               "0"))      # 0 = no cap (base units)
+TREASURY_ALERT_THRESHOLD  = int(os.getenv("TREASURY_ALERT_THRESHOLD",  "0"))      # 0 = no alert
 
 CURSOR_FILE = os.getenv("CURSOR_FILE", "/opt/relayers/algo_to_hbar/cursor_round.txt")
 RECEIPT_DB  = os.getenv("RECEIPT_DB",  "/opt/relayers/algo_to_hbar/receipts.db")
@@ -409,12 +410,15 @@ def main():
     log(f"  Hedera token   : {HEDERA_TOKEN_ID or 'native HBAR'}")
     log(f"  Treasury ID    : {HEDERA_TREASURY_ID}")
     log(f"  Receipt DB     : {RECEIPT_DB}")
+    if MAX_DEPOSIT == 0:
+        log("[WARN] MAX_DEPOSIT=0 — no per-deposit cap enforced. Set MAX_DEPOSIT to limit exposure.")
     log(f"  Max deposit    : {MAX_DEPOSIT if MAX_DEPOSIT > 0 else 'unlimited'}")
     if pending_cleared > 0:
         log(f"  Cleared {pending_cleared} stale 'pending' row(s) from prior crashed run — will retry.")
     log("-" * 60)
 
     next_round = load_cursor()
+    _backoff   = 1
 
     while True:
         try:
@@ -455,6 +459,11 @@ def main():
                     evm_receiver_hex = "0x" + evm_receiver_bytes.hex()
                     deposit_id_hex   = hashlib.sha256(raw).digest().hex()
 
+                    # ── Reject zero address ──
+                    if evm_receiver_bytes == bytes(20):
+                        log(f"  [SKIP] Zero EVM address in deposit log. Ignoring.")
+                        continue
+
                     # ── Fast skip: already handled (sent, exceeds_max, or pending in another instance) ──
                     if already_handled(db, deposit_id_hex):
                         continue
@@ -475,6 +484,8 @@ def main():
 
                     # ── Treasury balance check ──
                     treasury_bal = fetch_treasury_balance(HEDERA_TREASURY_ID, HEDERA_TOKEN_ID)
+                    if TREASURY_ALERT_THRESHOLD > 0 and 0 <= treasury_bal < TREASURY_ALERT_THRESHOLD:
+                        log(f"  [ALERT] Treasury balance {treasury_bal} below threshold {TREASURY_ALERT_THRESHOLD}!")
                     if treasury_bal >= 0 and treasury_bal < amount:
                         log(f"  [SKIP] Treasury ({treasury_bal}) < deposit ({amount}). Skipping -- will retry.")
                         log(f"     Top up treasury {HEDERA_TREASURY_ID} on Hedera!")
@@ -506,7 +517,11 @@ def main():
 
         except Exception as e:
             log(f"[ERROR] Relayer error: {e}")
+            time.sleep(min(POLL_DELAY * _backoff, 300))
+            _backoff = min(_backoff * 2, 16)
+            continue
 
+        _backoff = 1
         time.sleep(POLL_DELAY)
 
 

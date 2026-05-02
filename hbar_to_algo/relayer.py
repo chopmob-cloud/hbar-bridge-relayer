@@ -142,9 +142,19 @@ class MirrorNodeREST:
             url += f"&timestamp=gte:{after_timestamp}"
 
         req  = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data.get("logs", []) or []
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                return data.get("logs", []) or []
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    wait = (2 ** attempt) + random.uniform(0, 1)
+                    log.warning("Mirror Node 429 — backing off %.1fs", wait)
+                    time.sleep(wait)
+                else:
+                    raise
+        raise RuntimeError("Mirror Node rate limit: max retries exceeded")
 
     def get_current_timestamp(self) -> str:
         """Return the latest consensus timestamp from the network (seconds.nanos).
@@ -396,6 +406,8 @@ def main() -> None:
     log.info("Algo ASA         : %d", ALGO_TOKEN_ASA_ID)
     log.info("Algo admin       : %s", admin_addr)
     log.info("Receipt DB       : %s", RECEIPT_DB)
+    if MAX_DEPOSIT == 0:
+        log.warning("MAX_DEPOSIT=0 — no per-deposit cap enforced. Set MAX_DEPOSIT to limit exposure.")
     log.info("Max deposit      : %s", MAX_DEPOSIT if MAX_DEPOSIT > 0 else "unlimited")
     log.info("Scanning Hedera from timestamp %s", cursor)
     log.info("-" * 60)
