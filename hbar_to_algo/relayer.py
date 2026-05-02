@@ -519,8 +519,10 @@ def main() -> None:
                     wait_for_confirmation(algo_algod, algo_txid, ALGO_CONFIRM_ROUNDS)
                 except Exception as withdraw_err:
                     err_msg = str(withdraw_err).lower()
-                    # Box already exists → deposit already processed on-chain
-                    if "box" in err_msg and ("exist" in err_msg or "already" in err_msg):
+                    # Box already exists → deposit already processed on-chain.
+                    # Algorand returns "box_create; assert" (pc=210) when the box exists.
+                    if ("box" in err_msg and ("exist" in err_msg or "already" in err_msg)) or \
+                            ("box_create" in err_msg and "assert" in err_msg):
                         log.info("Deposit already processed on-chain (box exists). Marking done.")
                         record_receipt(db, dep_hex, "released", ts, contract_id,
                                        decoded["receiver_addr"], decoded["amount"],
