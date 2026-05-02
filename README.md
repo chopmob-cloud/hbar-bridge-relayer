@@ -359,3 +359,34 @@ When a deposit is held for retry (receiver not opted-in, escrow insufficient), t
 ### Concurrent instance protection (Algo → HBAR)
 
 `reserve_deposit()` issues `INSERT OR IGNORE INTO receipts ... status='pending'`. Only the instance whose INSERT has `rowcount == 1` owns the deposit and proceeds to send. This prevents double-sends if two relayer processes run simultaneously.
+
+---
+
+## Security
+
+### Secrets
+
+All credentials are loaded exclusively from environment variables or a `.env` file — never hardcoded. The required secrets are:
+
+| Secret | Service | Purpose |
+|---|---|---|
+| `HEDERA_OPERATOR_KEY` | Algo → HBAR | ED25519/ECDSA private key for the Hedera operator account |
+| `ALGO_ADMIN_MNEMONIC` | HBAR → Algo | 25-word Algorand mnemonic for the relayer wallet |
+
+The `.env` file should be readable only by the service user:
+```bash
+chmod 600 /opt/relayers/algo_to_hbar/env/algo_to_hbar.env
+chmod 600 /opt/relayers/hbar_to_algo/env/hbar_to_algo.env
+```
+
+### Replay protection
+
+Both relayers maintain a SQLite receipt database keyed on the deposit ID. A deposit is only processed if its ID is absent from the database — duplicate submissions are silently skipped.
+
+For HBAR → Algo, the Algorand escrow contract provides a second layer of replay protection: it creates an on-chain box keyed by `deposit_id` as part of the `withdraw_v2` call. If the box already exists the contract rejects the transaction with `box_create; assert` (opcode failure, pc=210). The relayer detects this error and marks the deposit as already processed rather than retrying indefinitely.
+
+### Input validation
+
+- **Zero-address check**: `hbar_to_algo/relayer.py` rejects any deposit whose decoded Algorand receiver is the all-zeros address.
+- **Per-deposit cap**: `MAX_DEPOSIT` env var (default `0` = no cap) prevents unexpectedly large releases if the deposit log is malformed.
+- **Backoff on errors**: The HBAR → Algo relayer applies exponential backoff (capped at `MAX_BACKOFF`) on repeated failures rather than hammering the chain.
